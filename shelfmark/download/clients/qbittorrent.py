@@ -192,26 +192,36 @@ class QBittorrentClient(DownloadClient):
 
     protocol = "torrent"
     name = "qbittorrent"
+    # Settings namespace: every config key this client reads is
+    # f"{config_prefix}_{SUFFIX}". Subclasses that talk to a second
+    # qBittorrent-compatible endpoint (see decypharr.py) override this so they
+    # get their own URL/credentials/category without touching the global client.
+    config_prefix = "QBITTORRENT"
+
+    @classmethod
+    def _cfg(cls, suffix: str, default: object = "") -> object:
+        """Read a namespaced config value (``<config_prefix>_<suffix>``)."""
+        return config.get(f"{cls.config_prefix}_{suffix}", default)
 
     def __init__(self) -> None:
         """Initialize qBittorrent client with settings from config."""
         # Lazy import to avoid dependency issues if not using torrents
         from qbittorrentapi import Client
 
-        raw_url = config.get("QBITTORRENT_URL", "")
+        raw_url = self._cfg("URL", "")
         if not raw_url:
-            msg = "QBITTORRENT_URL is required"
+            msg = f"{self.config_prefix}_URL is required"
             raise ValueError(msg)
 
         # We use `_base_url` for direct HTTP calls, so it must be a fully-qualified URL.
         self._base_url = normalize_http_config_url(raw_url, require_string=True)
         if not self._base_url:
-            msg = "QBITTORRENT_URL is invalid"
+            msg = f"{self.config_prefix}_URL is invalid"
             raise ValueError(msg)
 
-        username = config_text(config.get("QBITTORRENT_USERNAME", ""))
-        password = config_text(config.get("QBITTORRENT_PASSWORD", ""))
-        self._api_key = config_text(config.get("QBITTORRENT_API_KEY", ""))
+        username = config_text(self._cfg("USERNAME", ""))
+        password = config_text(self._cfg("PASSWORD", ""))
+        self._api_key = config_text(self._cfg("API_KEY", ""))
 
         # qbittorrent-api accepts either a full URL or host:port; prefer the normalized URL
         # for consistency.
@@ -222,9 +232,9 @@ class QBittorrentClient(DownloadClient):
             api_key=self._api_key or None,
             VERIFY_WEBUI_CERTIFICATE=get_ssl_verify(self._base_url),
         )
-        self._category = config_text(config.get("QBITTORRENT_CATEGORY", "books"))
-        self._download_dir = config_text(config.get("QBITTORRENT_DOWNLOAD_DIR", ""))
-        self._tags = _normalize_tags(config.get("QBITTORRENT_TAG", []))
+        self._category = config_text(self._cfg("CATEGORY", "books"))
+        self._download_dir = config_text(self._cfg("DOWNLOAD_DIR", ""))
+        self._tags = _normalize_tags(self._cfg("TAG", []))
         # download_id -> qBittorrent's current primary hash, for identities that no
         # longer match it directly. See _resolve_torrent().
         self._primary_hashes: dict[str, str] = {}

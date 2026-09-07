@@ -11,9 +11,11 @@ from shelfmark.download.clients import (
     list_configured_clients,
 )
 from shelfmark.download.clients.base_handler import (
+    _CLIENT_CLEANUP_ERRORS,
     DownloadRequest,
     ExternalClientHandler,
 )
+from shelfmark.download.clients.decypharr import DecypharrClient
 from shelfmark.release_sources import register_handler
 from shelfmark.release_sources.audiobookbay import scraper
 from shelfmark.release_sources.audiobookbay.utils import normalize_hostname
@@ -83,12 +85,51 @@ class AudiobookBayHandler(ExternalClientHandler):
         return scraper.extract_file_list(detail_html)
 
     def _get_client(self, protocol: str) -> DownloadClient | None:
-        """Compatibility shim so module-level patching still works in tests."""
+        """Prefer the dedicated Decypharr client for torrents, else the shared client.
+
+        The module-level ``get_client`` call is kept as the fallback so tests can
+        still patch it.
+        """
+        if protocol == "torrent" and DecypharrClient.is_configured():
+            return DecypharrClient()
         return get_client(protocol)
 
     def _list_configured_clients(self) -> list[str]:
-        """Compatibility shim so module-level patching still works in tests."""
-        return list_configured_clients()
+        """Shared clients plus the dedicated Decypharr torrent client when configured."""
+        configured = list(list_configured_clients())
+        if DecypharrClient.is_configured() and "torrent" not in configured:
+            configured.append("torrent")
+        return configured
+
+    def _get_category_for_task(self, client: DownloadClient, task: DownloadTask) -> str | None:
+        """Decypharr downloads always use their own category; others follow the base rules."""
+        if isinstance(client, DecypharrClient):
+            return client.category or None
+        return super()._get_category_for_task(client, task)
+
+    def post_process_cleanup(self, task: DownloadTask, *, success: bool) -> None:
+        """Apply ABB_TORRENT_ACTION to Decypharr entries; defer to the base class otherwise."""
+        client_ref = self._cleanup_refs.get(task.task_id)
+        if client_ref is None or not isinstance(client_ref[0], DecypharrClient):
+            super().post_process_cleanup(task, success=success)
+            return
+
+        self._cleanup_refs.pop(task.task_id, None)
+        if not success:
+            return
+
+        client, download_id, _protocol = client_ref
+        if config.get("ABB_TORRENT_ACTION", "remove") != "remove":
+            return
+        try:
+            client.remove(download_id, delete_files=False)
+        except _CLIENT_CLEANUP_ERRORS as e:
+            logger.warning(
+                "Failed to remove AudiobookBay download %s from %s: %s",
+                download_id,
+                getattr(client, "name", "client"),
+                e,
+            )
 
     def _resolve_download(
         self,
