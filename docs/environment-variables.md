@@ -1580,6 +1580,7 @@ How long to keep cached search results before they expire.
 | `QBITTORRENT_CATEGORY_AUDIOBOOK` | Category for audiobook downloads. Leave empty to use the book category. | string | _empty string_ |
 | `QBITTORRENT_DOWNLOAD_DIR` | Server-side directory where torrents are downloaded (optional, uses qBittorrent default if not specified) | string | _none_ |
 | `QBITTORRENT_TAG` | Tag(s) to assign to qBittorrent downloads. Leave empty for no tags. | string (comma-separated) | _empty list_ |
+| `QBITTORRENT_FORCE_START` | Force-start torrents added by Shelfmark so they bypass qBittorrent's queue limits and keep seeding. Recommended for private trackers, where a queued torrent counts as not seeding. | boolean | `false` |
 | `TRANSMISSION_URL` | URL of your Transmission instance (use https:// for TLS) | string | _none_ |
 | `TRANSMISSION_USERNAME` | Transmission RPC username (if authentication enabled) | string | _none_ |
 | `TRANSMISSION_PASSWORD` | Transmission RPC password | string (secret) | _none_ |
@@ -1714,6 +1715,15 @@ Tag(s) to assign to qBittorrent downloads. Leave empty for no tags.
 
 - **Type:** string (comma-separated)
 - **Default:** _empty list_
+
+#### `QBITTORRENT_FORCE_START`
+
+**Force Start**
+
+Force-start torrents added by Shelfmark so they bypass qBittorrent's queue limits and keep seeding. Recommended for private trackers, where a queued torrent counts as not seeding.
+
+- **Type:** boolean
+- **Default:** `false`
 
 #### `TRANSMISSION_URL`
 

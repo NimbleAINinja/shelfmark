@@ -76,6 +76,11 @@ def _resolve_qbittorrent_exception_type(candidate: object) -> type[Exception]:
 
 _QBittorrentApiError = _resolve_qbittorrent_exception_type(_ImportedQBittorrentApiError)
 _QBittorrentLoginFailed = _resolve_qbittorrent_exception_type(_ImportedQBittorrentLoginFailed)
+# Force-start confirmation: a handful of short retries covers qBittorrent's
+# asynchronous torrent registration without stalling the add for long.
+_FORCE_START_ATTEMPTS = 6
+_FORCE_START_RETRY_SECONDS = 0.5
+
 _QBITTORRENT_CLIENT_ERRORS = (
     _QBittorrentLoginFailed,
     _QBittorrentApiError,
@@ -225,6 +230,9 @@ class QBittorrentClient(DownloadClient):
         self._category = config_text(config.get("QBITTORRENT_CATEGORY", "books"))
         self._download_dir = config_text(config.get("QBITTORRENT_DOWNLOAD_DIR", ""))
         self._tags = _normalize_tags(config.get("QBITTORRENT_TAG", []))
+        # Force-start new torrents so they bypass qBittorrent's queue limits and
+        # keep seeding (private trackers count a queued torrent as not seeding).
+        self._force_start = bool(config.get("QBITTORRENT_FORCE_START", False))
         # download_id -> qBittorrent's current primary hash, for identities that no
         # longer match it directly. See _resolve_torrent().
         self._primary_hashes: dict[str, str] = {}
@@ -556,6 +564,8 @@ class QBittorrentClient(DownloadClient):
                 elif torrent and getattr(torrent, "state", None) not in _METADATA_DOWNLOAD_STATES:
                     torrent_hash = getattr(torrent, "hash", None)
                     if isinstance(torrent_hash, str) and torrent_hash:
+                        if self._force_start:
+                            self._apply_force_start(torrent_hash, category)
                         logger.info("Added torrent: %s", torrent_hash)
                         return torrent_hash.lower()
                 time.sleep(_METADATA_WAIT_INTERVAL_SECONDS)
@@ -565,11 +575,40 @@ class QBittorrentClient(DownloadClient):
                 expected_hash,
                 _METADATA_WAIT_POLLS * _METADATA_WAIT_INTERVAL_SECONDS,
             )
+            if self._force_start:
+                self._apply_force_start(expected_hash, category)
         except _QBITTORRENT_CLIENT_ERRORS:
             logger.exception("qBittorrent add failed")
             raise
         else:
             return expected_hash.lower()
+
+    def _apply_force_start(self, torrent_hash: str, category: str | None) -> None:
+        """Flag an added torrent as force-started; never fail the add over it.
+
+        qBittorrent silently ignores the call for a hash it does not know yet
+        (adds are registered asynchronously), so re-read the torrent and retry
+        while it still reports ``force_start`` as False.
+        """
+        for attempt in range(_FORCE_START_ATTEMPTS):
+            try:
+                self._client.torrents_set_force_start(enable=True, torrent_hashes=torrent_hash)
+            except _QBITTORRENT_CLIENT_ERRORS as e:
+                logger.warning("Could not force-start torrent %s: %s", torrent_hash, e)
+                return
+            torrent, _error = self._resolve_torrent(torrent_hash, category)
+            flagged = getattr(torrent, "force_start", None) if torrent else None
+            # Older clients/emulators omit the field: trust the accepted call.
+            if flagged is None or flagged:
+                logger.info("Force-started torrent %s", torrent_hash)
+                return
+            if attempt < _FORCE_START_ATTEMPTS - 1:
+                time.sleep(_FORCE_START_RETRY_SECONDS)
+        logger.warning(
+            "Force-start not confirmed for torrent %s after %d attempts",
+            torrent_hash,
+            _FORCE_START_ATTEMPTS,
+        )
 
     def get_status(self, download_id: str) -> DownloadStatus:
         """Get torrent status by hash.

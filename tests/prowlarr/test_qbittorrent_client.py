@@ -2060,3 +2060,126 @@ class TestTorrentMatchesId:
 
         assert _torrent_matches_download_id(MockTorrent(hash_val="different"), "requested") is False
         assert _torrent_matches_download_id(object(), "requested") is False
+
+
+class TestQBittorrentClientForceStart:
+    """QBITTORRENT_FORCE_START flags new torrents as force-started (local patch)."""
+
+    def _add_with_config(self, monkeypatch, force_start):
+        config_values = {
+            "QBITTORRENT_URL": "http://localhost:8080",
+            "QBITTORRENT_CATEGORY": "test",
+            "QBITTORRENT_FORCE_START": force_start,
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.qbittorrent.config.get",
+            lambda key, default="": config_values.get(key, default),
+        )
+        torrent_hash = "3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0"
+        mock_torrent = MockTorrent(hash_val=torrent_hash)
+        mock_client_instance = MagicMock()
+        mock_client_instance.torrents_add.return_value = "Ok."
+        mock_client_instance.torrents_info.return_value = [mock_torrent]
+        mock_client_instance._session.get.return_value = create_mock_session_response(
+            [mock_torrent], status_code=200
+        )
+        mock_client_class = MagicMock(return_value=mock_client_instance)
+
+        with patch.dict("sys.modules", {"qbittorrentapi": MagicMock(Client=mock_client_class)}):
+            import importlib
+
+            import shelfmark.download.clients.qbittorrent as qb_module
+
+            importlib.reload(qb_module)
+
+            client = qb_module.QBittorrentClient()
+            result = client.add_download(
+                f"magnet:?xt=urn:btih:{torrent_hash}&dn=test", "Test Download"
+            )
+
+        assert result == torrent_hash
+        return mock_client_instance, torrent_hash
+
+    def test_force_start_applied_when_enabled(self, monkeypatch):
+        client, torrent_hash = self._add_with_config(monkeypatch, force_start=True)
+        client.torrents_set_force_start.assert_called_once_with(
+            enable=True, torrent_hashes=torrent_hash
+        )
+
+    def test_force_start_skipped_when_disabled(self, monkeypatch):
+        client, _ = self._add_with_config(monkeypatch, force_start=False)
+        client.torrents_set_force_start.assert_not_called()
+
+    def test_force_start_failure_does_not_fail_the_add(self, monkeypatch):
+        config_values = {
+            "QBITTORRENT_URL": "http://localhost:8080",
+            "QBITTORRENT_CATEGORY": "test",
+            "QBITTORRENT_FORCE_START": True,
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.qbittorrent.config.get",
+            lambda key, default="": config_values.get(key, default),
+        )
+        torrent_hash = "3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0"
+        mock_torrent = MockTorrent(hash_val=torrent_hash)
+        mock_client_instance = MagicMock()
+        mock_client_instance.torrents_add.return_value = "Ok."
+        mock_client_instance.torrents_info.return_value = [mock_torrent]
+        mock_client_instance.torrents_set_force_start.side_effect = RuntimeError("boom")
+        mock_client_instance._session.get.return_value = create_mock_session_response(
+            [mock_torrent], status_code=200
+        )
+        mock_client_class = MagicMock(return_value=mock_client_instance)
+
+        with patch.dict("sys.modules", {"qbittorrentapi": MagicMock(Client=mock_client_class)}):
+            import importlib
+
+            import shelfmark.download.clients.qbittorrent as qb_module
+
+            importlib.reload(qb_module)
+
+            client = qb_module.QBittorrentClient()
+            result = client.add_download(
+                f"magnet:?xt=urn:btih:{torrent_hash}&dn=test", "Test Download"
+            )
+
+        assert result == torrent_hash
+
+    def test_force_start_retries_until_qbittorrent_confirms(self, monkeypatch):
+        """qBittorrent registers adds asynchronously; keep re-applying until force_start reads True."""
+        config_values = {
+            "QBITTORRENT_URL": "http://localhost:8080",
+            "QBITTORRENT_CATEGORY": "test",
+            "QBITTORRENT_FORCE_START": True,
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.qbittorrent.config.get",
+            lambda key, default="": config_values.get(key, default),
+        )
+        torrent_hash = "3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0"
+        base = MockTorrent(hash_val=torrent_hash).to_dict()
+        # 1st read: the add loop's resolve; 2nd: after the first set call (still False);
+        # 3rd: after the second set call (confirmed).
+        flags = iter([False, False, True])
+        mock_client_instance = MagicMock()
+        mock_client_instance.torrents_add.return_value = "Ok."
+        mock_client_instance._session.get.side_effect = lambda *_a, **_k: (
+            create_mock_session_response([{**base, "force_start": next(flags, True)}])
+        )
+        mock_client_class = MagicMock(return_value=mock_client_instance)
+
+        with patch.dict("sys.modules", {"qbittorrentapi": MagicMock(Client=mock_client_class)}):
+            import importlib
+
+            import shelfmark.download.clients.qbittorrent as qb_module
+
+            importlib.reload(qb_module)
+            monkeypatch.setattr(qb_module.time, "sleep", lambda _s: None)
+
+            client = qb_module.QBittorrentClient()
+            result = client.add_download(
+                f"magnet:?xt=urn:btih:{torrent_hash}&dn=test", "Test Download"
+            )
+
+        assert result == torrent_hash
+        assert mock_client_instance.torrents_set_force_start.call_count == 2
