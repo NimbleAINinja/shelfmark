@@ -1676,6 +1676,16 @@ Clear the transfer from slskd's download list after Shelfmark imports it. Applie
 | `ABB_SEED_TIME_MINUTES` | How long a finished AudiobookBay torrent keeps seeding before the client stops it. 0 uses the torrent client's own limit. | number | `0` |
 | `ABB_SEED_RATIO` | Share ratio an AudiobookBay torrent should reach before the client stops it. 0 uses the torrent client's own limit. | number | `0.0` |
 | `ABB_RATE_LIMIT_DELAY` | Delay between requests in seconds to avoid rate limiting (0-10). | number | `1.0` |
+| `ABB_DECYPHARR_ENABLED` | Send AudiobookBay magnets to a dedicated qBittorrent-compatible debrid client (Decypharr) instead of the global torrent client configured under Download Clients. | boolean | `false` |
+| `ABB_DECYPHARR_URL` | Web UI URL of your Decypharr instance (e.g. http://decypharr:8282). | string | _empty string_ |
+| `ABB_DECYPHARR_USERNAME` | Decypharr Web UI username. | string | _empty string_ |
+| `ABB_DECYPHARR_PASSWORD` | Decypharr Web UI password. | string (secret) | _none_ |
+| `ABB_DECYPHARR_API_KEY` | Optional bearer API key; used instead of username/password when set. | string (secret) | _none_ |
+| `ABB_DECYPHARR_CATEGORY` | Category assigned to AudiobookBay downloads. Decypharr saves each torrent under <download folder>/<category>/, so this doubles as the staging folder name. | string | `shelfmark` |
+| `ABB_DECYPHARR_DOWNLOAD_DIR` | Optional server-side save path override (leave empty to use the Decypharr default). | string | _empty string_ |
+| `ABB_DECYPHARR_TAG` | Optional tags to assign to Decypharr downloads. | string (comma-separated) | _empty list_ |
+| `ABB_TORRENT_ACTION` | What to do with the Decypharr entry after the files have been imported. | string (choice) | `remove` |
+| `ABB_MOVE_ON_IMPORT` | Move AudiobookBay downloads out of the client path into the destination instead of copying them. Only sensible with a debrid client that does not seed. | boolean | `true` |
 
 <details>
 <summary>Detailed descriptions</summary>
@@ -1747,6 +1757,98 @@ Delay between requests in seconds to avoid rate limiting (0-10).
 - **Type:** number
 - **Default:** `1.0`
 - **Constraints:** min: 0.0, max: 10.0
+
+#### `ABB_DECYPHARR_ENABLED`
+
+**Use Decypharr for AudiobookBay**
+
+Send AudiobookBay magnets to a dedicated qBittorrent-compatible debrid client (Decypharr) instead of the global torrent client configured under Download Clients.
+
+- **Type:** boolean
+- **Default:** `false`
+
+#### `ABB_DECYPHARR_URL`
+
+**Decypharr URL**
+
+Web UI URL of your Decypharr instance (e.g. http://decypharr:8282).
+
+- **Type:** string
+- **Default:** _empty string_
+- **Required:** Yes
+
+#### `ABB_DECYPHARR_USERNAME`
+
+**Username**
+
+Decypharr Web UI username.
+
+- **Type:** string
+- **Default:** _empty string_
+
+#### `ABB_DECYPHARR_PASSWORD`
+
+**Password**
+
+Decypharr Web UI password.
+
+- **Type:** string (secret)
+- **Default:** _none_
+
+#### `ABB_DECYPHARR_API_KEY`
+
+**API Key**
+
+Optional bearer API key; used instead of username/password when set.
+
+- **Type:** string (secret)
+- **Default:** _none_
+
+#### `ABB_DECYPHARR_CATEGORY`
+
+**Category**
+
+Category assigned to AudiobookBay downloads. Decypharr saves each torrent under <download folder>/<category>/, so this doubles as the staging folder name.
+
+- **Type:** string
+- **Default:** `shelfmark`
+
+#### `ABB_DECYPHARR_DOWNLOAD_DIR`
+
+**Download Directory**
+
+Optional server-side save path override (leave empty to use the Decypharr default).
+
+- **Type:** string
+- **Default:** _empty string_
+
+#### `ABB_DECYPHARR_TAG`
+
+**Tags**
+
+Optional tags to assign to Decypharr downloads.
+
+- **Type:** string (comma-separated)
+- **Default:** _empty list_
+
+#### `ABB_TORRENT_ACTION`
+
+**Completion Action**
+
+What to do with the Decypharr entry after the files have been imported.
+
+- **Type:** string (choice)
+- **Default:** `remove`
+- **Options:** `keep` (Keep), `remove` (Remove)
+
+#### `ABB_MOVE_ON_IMPORT`
+
+**Move Files on Import**
+
+Move AudiobookBay downloads out of the client path into the destination instead of copying them. Only sensible with a debrid client that does not seed.
+
+- **Type:** boolean
+- **Default:** `true`
 
 </details>
 
@@ -1963,6 +2065,7 @@ How long to keep cached search results before they expire.
 | `TRANSMISSION_DOWNLOAD_DIR_AUDIOBOOK` | Server-side directory where audiobook torrents are downloaded (optional, uses Transmission default if not specified) | string | _none_ |
 | `QBITTORRENT_DOWNLOAD_DIR` | Server-side directory where torrents are downloaded (optional, uses qBittorrent default if not specified) | string | _none_ |
 | `QBITTORRENT_TAG` | Tag(s) to assign to qBittorrent downloads. Leave empty for no tags. | string (comma-separated) | _empty list_ |
+| `QBITTORRENT_FORCE_START` | Force-start torrents added by Shelfmark so they bypass qBittorrent's queue limits and keep seeding. Recommended for private trackers, where a queued torrent counts as not seeding. | boolean | `false` |
 | `TRANSMISSION_URL` | URL of your Transmission instance (use https:// for TLS) | string | _none_ |
 | `TRANSMISSION_USERNAME` | Transmission RPC username (if authentication enabled) | string | _none_ |
 | `TRANSMISSION_PASSWORD` | Transmission RPC password | string (secret) | _none_ |
@@ -2160,6 +2263,15 @@ Tag(s) to assign to qBittorrent downloads. Leave empty for no tags.
 
 - **Type:** string (comma-separated)
 - **Default:** _empty list_
+
+#### `QBITTORRENT_FORCE_START`
+
+**Force Start**
+
+Force-start torrents added by Shelfmark so they bypass qBittorrent's queue limits and keep seeding. Recommended for private trackers, where a queued torrent counts as not seeding.
+
+- **Type:** boolean
+- **Default:** `false`
 
 #### `TRANSMISSION_URL`
 
