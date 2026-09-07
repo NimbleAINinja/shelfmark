@@ -117,6 +117,11 @@ def extract_archive_files(
     return extracted_files, rejected_files, cleanup_paths, None
 
 
+def is_macos_metadata_file(filename: str) -> bool:
+    """True for macOS AppleDouble sidecars (``._name``) and ``.DS_Store``."""
+    return filename.startswith("._") or filename == ".DS_Store"
+
+
 def scan_directory_tree(
     directory: Path,
     content_type: str | None,
@@ -184,6 +189,12 @@ def scan_directory_tree(
 
         for root, _, files in os.walk(directory, onerror=onerror):
             for filename in files:
+                if is_macos_metadata_file(filename):
+                    # AppleDouble sidecars (._foo.epub) and .DS_Store show up in
+                    # torrent folders written on macOS. They carry the book's
+                    # extension but hold resource-fork metadata, and FUSE/rclone
+                    # destinations refuse to create them (ENOENT).
+                    continue
                 file_path = Path(root) / filename
                 suffix = file_path.suffix.lower()
 
