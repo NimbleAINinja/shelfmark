@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, TypeGuard
 
 from shelfmark.core.settings_registry import (
     ActionButton,
+    CheckboxField,
     HeadingField,
     PasswordField,
     SelectField,
@@ -693,6 +694,17 @@ def prowlarr_clients_settings() -> list[SettingsField]:
             placeholder="",
             default=[],
             normalize_urls=False,
+            show_when={"field": "PROWLARR_TORRENT_CLIENT", "value": "qbittorrent"},
+        ),
+        CheckboxField(
+            key="QBITTORRENT_FORCE_START",
+            label="Force Start",
+            description=(
+                "Force-start torrents added by Shelfmark so they bypass qBittorrent's queue "
+                "limits and keep seeding. Recommended for private trackers, where a queued "
+                "torrent counts as not seeding."
+            ),
+            default=False,
             show_when={"field": "PROWLARR_TORRENT_CLIENT", "value": "qbittorrent"},
         ),
         # --- Transmission Settings ---

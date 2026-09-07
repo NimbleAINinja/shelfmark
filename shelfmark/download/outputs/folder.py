@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import shelfmark.core.config as core_config
@@ -12,7 +15,6 @@ from shelfmark.download.outputs import StatusCallback, register_output
 from shelfmark.download.staging import STAGE_NONE, StageAction
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from threading import Event
 
     from shelfmark.core.models import DownloadTask
@@ -41,6 +43,36 @@ class _ProcessingPlan:
 
 def _supports_folder_output(task: DownloadTask) -> bool:
     return True
+
+
+def _prune_empty_dirs(root: Path, task: DownloadTask) -> None:
+    """Remove ``root`` and its now-empty subdirectories after a move-on-import.
+
+    Bottom-up ``rmdir`` only: anything still holding a file is left alone, so a
+    partially moved or externally modified tree is never destroyed.
+    """
+    try:
+        if not root.is_dir():
+            return
+        for current, dirnames, _filenames in os.walk(root, topdown=False):
+            for name in dirnames:
+                with suppress(OSError):
+                    (Path(current) / name).rmdir()
+        try:
+            root.rmdir()
+        except OSError as exc:
+            logger.info(
+                "Task %s: left client directory in place (not empty): %s (%s)",
+                task.task_id,
+                root,
+                exc,
+            )
+            return
+        logger.info("Task %s: removed emptied client directory %s", task.task_id, root)
+    except OSError as exc:
+        logger.warning(
+            "Task %s: cleanup of client directory %s failed: %s", task.task_id, root, exc
+        )
 
 
 def _build_processing_plan(
@@ -160,6 +192,20 @@ def process_folder_output(
     # "Move" is implemented as a client-side cleanup after import.
     preserve_source = is_usenet or preserve_source_on_failure
 
+    # Local patch: AudiobookBay releases fetched through a debrid client (see
+    # release_sources/audiobookbay) do not seed, so they may be moved out of the
+    # client path instead of copied. Only that source honours the switch; every
+    # other torrent keeps the copy/hardlink behaviour that protects seeding.
+    torrent_source = is_torrent
+    force_move = task.source == "audiobookbay" and bool(
+        core_config.config.get("ABB_MOVE_ON_IMPORT", False)
+    )
+    if force_move:
+        use_hardlink = False
+        source_path = prepared.working_path
+        is_torrent = False
+        preserve_source = False
+
     copy_for_label = (
         is_torrent or preserve_source or prepared.output_plan.stage_action != STAGE_NONE
     )
@@ -239,7 +285,7 @@ def process_folder_output(
         transfer=CustomScriptTransferSummary(
             op_counts=op_counts,
             use_hardlink=use_hardlink,
-            is_torrent=is_torrent,
+            is_torrent=torrent_source,
             preserve_source=preserve_source,
         ),
     )
@@ -260,6 +306,9 @@ def process_folder_output(
         task,
         prepared.cleanup_paths,
     )
+
+    if force_move and torrent_source:
+        _prune_empty_dirs(source_path, task)
 
     pack_groups = resolve_book_groups(
         task, prepared.files, organization_mode=plan.organization_mode

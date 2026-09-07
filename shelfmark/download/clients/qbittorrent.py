@@ -76,6 +76,11 @@ def _resolve_qbittorrent_exception_type(candidate: object) -> type[Exception]:
 
 _QBittorrentApiError = _resolve_qbittorrent_exception_type(_ImportedQBittorrentApiError)
 _QBittorrentLoginFailed = _resolve_qbittorrent_exception_type(_ImportedQBittorrentLoginFailed)
+# Force-start confirmation: a handful of short retries covers qBittorrent's
+# asynchronous torrent registration without stalling the add for long.
+_FORCE_START_ATTEMPTS = 6
+_FORCE_START_RETRY_SECONDS = 0.5
+
 _QBITTORRENT_CLIENT_ERRORS = (
     _QBittorrentLoginFailed,
     _QBittorrentApiError,
@@ -192,26 +197,36 @@ class QBittorrentClient(DownloadClient):
 
     protocol = "torrent"
     name = "qbittorrent"
+    # Settings namespace: every config key this client reads is
+    # f"{config_prefix}_{SUFFIX}". Subclasses that talk to a second
+    # qBittorrent-compatible endpoint (see decypharr.py) override this so they
+    # get their own URL/credentials/category without touching the global client.
+    config_prefix = "QBITTORRENT"
+
+    @classmethod
+    def _cfg(cls, suffix: str, default: object = "") -> object:
+        """Read a namespaced config value (``<config_prefix>_<suffix>``)."""
+        return config.get(f"{cls.config_prefix}_{suffix}", default)
 
     def __init__(self) -> None:
         """Initialize qBittorrent client with settings from config."""
         # Lazy import to avoid dependency issues if not using torrents
         from qbittorrentapi import Client
 
-        raw_url = config.get("QBITTORRENT_URL", "")
+        raw_url = self._cfg("URL", "")
         if not raw_url:
-            msg = "QBITTORRENT_URL is required"
+            msg = f"{self.config_prefix}_URL is required"
             raise ValueError(msg)
 
         # We use `_base_url` for direct HTTP calls, so it must be a fully-qualified URL.
         self._base_url = normalize_http_config_url(raw_url, require_string=True)
         if not self._base_url:
-            msg = "QBITTORRENT_URL is invalid"
+            msg = f"{self.config_prefix}_URL is invalid"
             raise ValueError(msg)
 
-        username = config_text(config.get("QBITTORRENT_USERNAME", ""))
-        password = config_text(config.get("QBITTORRENT_PASSWORD", ""))
-        self._api_key = config_text(config.get("QBITTORRENT_API_KEY", ""))
+        username = config_text(self._cfg("USERNAME", ""))
+        password = config_text(self._cfg("PASSWORD", ""))
+        self._api_key = config_text(self._cfg("API_KEY", ""))
 
         # qbittorrent-api accepts either a full URL or host:port; prefer the normalized URL
         # for consistency.
@@ -222,9 +237,12 @@ class QBittorrentClient(DownloadClient):
             api_key=self._api_key or None,
             VERIFY_WEBUI_CERTIFICATE=get_ssl_verify(self._base_url),
         )
-        self._category = config_text(config.get("QBITTORRENT_CATEGORY", "books"))
-        self._download_dir = config_text(config.get("QBITTORRENT_DOWNLOAD_DIR", ""))
-        self._tags = _normalize_tags(config.get("QBITTORRENT_TAG", []))
+        self._category = config_text(self._cfg("CATEGORY", "books"))
+        self._download_dir = config_text(self._cfg("DOWNLOAD_DIR", ""))
+        self._tags = _normalize_tags(self._cfg("TAG", []))
+        # Force-start new torrents so they bypass qBittorrent's queue limits and
+        # keep seeding (private trackers count a queued torrent as not seeding).
+        self._force_start = bool(self._cfg("FORCE_START", False))
         # download_id -> qBittorrent's current primary hash, for identities that no
         # longer match it directly. See _resolve_torrent().
         self._primary_hashes: dict[str, str] = {}
@@ -556,6 +574,8 @@ class QBittorrentClient(DownloadClient):
                 elif torrent and getattr(torrent, "state", None) not in _METADATA_DOWNLOAD_STATES:
                     torrent_hash = getattr(torrent, "hash", None)
                     if isinstance(torrent_hash, str) and torrent_hash:
+                        if self._force_start:
+                            self._apply_force_start(torrent_hash, category)
                         logger.info("Added torrent: %s", torrent_hash)
                         return torrent_hash.lower()
                 time.sleep(_METADATA_WAIT_INTERVAL_SECONDS)
@@ -565,11 +585,40 @@ class QBittorrentClient(DownloadClient):
                 expected_hash,
                 _METADATA_WAIT_POLLS * _METADATA_WAIT_INTERVAL_SECONDS,
             )
+            if self._force_start:
+                self._apply_force_start(expected_hash, category)
         except _QBITTORRENT_CLIENT_ERRORS:
             logger.exception("qBittorrent add failed")
             raise
         else:
             return expected_hash.lower()
+
+    def _apply_force_start(self, torrent_hash: str, category: str | None) -> None:
+        """Flag an added torrent as force-started; never fail the add over it.
+
+        qBittorrent silently ignores the call for a hash it does not know yet
+        (adds are registered asynchronously), so re-read the torrent and retry
+        while it still reports ``force_start`` as False.
+        """
+        for attempt in range(_FORCE_START_ATTEMPTS):
+            try:
+                self._client.torrents_set_force_start(enable=True, torrent_hashes=torrent_hash)
+            except _QBITTORRENT_CLIENT_ERRORS as e:
+                logger.warning("Could not force-start torrent %s: %s", torrent_hash, e)
+                return
+            torrent, _error = self._resolve_torrent(torrent_hash, category)
+            flagged = getattr(torrent, "force_start", None) if torrent else None
+            # Older clients/emulators omit the field: trust the accepted call.
+            if flagged is None or flagged:
+                logger.info("Force-started torrent %s", torrent_hash)
+                return
+            if attempt < _FORCE_START_ATTEMPTS - 1:
+                time.sleep(_FORCE_START_RETRY_SECONDS)
+        logger.warning(
+            "Force-start not confirmed for torrent %s after %d attempts",
+            torrent_hash,
+            _FORCE_START_ATTEMPTS,
+        )
 
     def get_status(self, download_id: str) -> DownloadStatus:
         """Get torrent status by hash.
