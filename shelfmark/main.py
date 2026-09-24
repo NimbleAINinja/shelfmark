@@ -94,6 +94,7 @@ from shelfmark.release_sources import (
     SourceUnavailableError,
     get_source_display_name,
 )
+from shelfmark.release_sources.prowlarr import wake as prowlarr_wake
 
 if TYPE_CHECKING:
     from shelfmark.metadata_providers import BookMetadata, MetadataProvider
@@ -3380,6 +3381,9 @@ def handle_connect() -> None:
 
     # Track the connection (triggers warmup callbacks on first connect)
     ws_manager.client_connected()
+
+    # An open UI means a search is likely: start an on-demand Prowlarr booting now.
+    prowlarr_wake.wake_async()
 
     # Join appropriate room based on authenticated user session
     is_admin, db_user_id, can_access_status = _resolve_status_scope()
