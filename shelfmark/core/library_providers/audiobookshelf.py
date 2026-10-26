@@ -8,6 +8,7 @@ folder path.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -28,10 +29,17 @@ _ITEMS_PAGE_LIMIT = 500
 _SERIES_PREFIX = re.compile(r"^(?P<label>[^\d:]{1,40}?)\s+(?P<number>\d+(?:\.\d+)?)\s*:\s*(?=\S)")
 
 
+# Homelab: when the fields are empty, use the ABS_URL / ABS_API_KEY the container already
+# has for scripts/abs-ingest.py. Read straight from the environment, so Shelfmark's
+# env-to-config sync never writes a second copy of the key into config/settings.json.
 def _config(overrides: Mapping[str, Any] | None = None) -> tuple[bool, str, str, list[str]]:
     enabled = bool(setting(app_config, "LIBRARY_CHECK_AUDIOBOOKSHELF_ENABLED", False, overrides))
-    url = normalize_http_url(str(setting(app_config, "AUDIOBOOKSHELF_URL", "", overrides) or ""))
-    token = str(setting(app_config, "AUDIOBOOKSHELF_TOKEN", "", overrides) or "").strip()
+    url = setting(app_config, "AUDIOBOOKSHELF_URL", "", overrides) or os.environ.get("ABS_URL")
+    url = normalize_http_url(str(url or ""))
+    token = setting(app_config, "AUDIOBOOKSHELF_TOKEN", "", overrides) or os.environ.get(
+        "ABS_API_KEY"
+    )
+    token = str(token or "").strip()
     lib_ids_raw = str(setting(app_config, "AUDIOBOOKSHELF_LIBRARY_IDS", "", overrides) or "")
     lib_ids = [s.strip() for s in lib_ids_raw.split(",") if s.strip()]
     return enabled, url, token, lib_ids
