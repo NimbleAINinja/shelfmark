@@ -23,6 +23,8 @@ def config(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         lambda key, default=None, user_id=None: values.get(key, default),
     )
     monkeypatch.setattr(library_index, "_cache", {})
+    monkeypatch.delenv("ABS_URL", raising=False)
+    monkeypatch.delenv("ABS_API_KEY", raising=False)
     return values
 
 
@@ -410,3 +412,24 @@ def test_unsaved_form_values_override_the_saved_settings(config: dict[str, Any])
     provider = audiobookshelf.AudiobookshelfLibrary({"AUDIOBOOKSHELF_URL": "http://form:13378"})
 
     assert provider.describe() == "Audiobookshelf at http://form:13378"
+
+
+def test_homelab_falls_back_to_the_abs_ingest_environment(
+    config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config["LIBRARY_CHECK_AUDIOBOOKSHELF_ENABLED"] = True
+    monkeypatch.setenv("ABS_URL", "http://abs:13378")
+    monkeypatch.setenv("ABS_API_KEY", "env-key")
+
+    assert audiobookshelf._config() == (True, "http://abs:13378", "env-key", [])
+    assert audiobookshelf.AudiobookshelfLibrary().is_enabled()
+
+
+def test_homelab_settings_win_over_the_abs_ingest_environment(
+    config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.update(AUDIOBOOKSHELF_URL="http://set:1", AUDIOBOOKSHELF_TOKEN="set-key")
+    monkeypatch.setenv("ABS_URL", "http://abs:13378")
+    monkeypatch.setenv("ABS_API_KEY", "env-key")
+
+    assert audiobookshelf._config()[1:3] == ("http://set:1", "set-key")
